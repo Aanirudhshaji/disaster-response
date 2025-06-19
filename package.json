@@ -1,0 +1,29 @@
+{
+  "name": "disaster-response",
+  "version": "1.0.0",
+  "description": "Backend server for Disaster Response Coordination Platform using Node.js, Express, Supabase, and Google Gemini API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "author": "Anirudh Shaji",
+  "license": "ISC",
+  "keywords": [
+    "disaster",
+    "backend",
+    "supabase",
+    "express",
+    "nodejs"
+  ],
+  "dependencies": {
+    "@supabase/supabase-js": "^2.50.0",
+    "axios": "^1.10.0",
+    "cheerio": "^1.1.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "nodemon": "^3.1.10",
+    "socket.io": "^4.8.1"
+  }
+}
