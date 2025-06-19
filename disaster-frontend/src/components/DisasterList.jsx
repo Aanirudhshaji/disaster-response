@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 
-const API = "http://localhost:5001";
+const API = "https://disaster-response-wj1d.onrender.com";
 
 export default function DisasterList() {
   const [disasters, setDisasters] = useState([]);
