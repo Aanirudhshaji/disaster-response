@@ -8,7 +8,7 @@ const cheerio = require("cheerio");
 const PRIORITY_KEYWORDS = ["urgent", "sos", "emergency", "help"];
 const isPriority = (text) => PRIORITY_KEYWORDS.some(k => text.toLowerCase().includes(k));
 
-// POST /disasters
+// 🔹 POST /disasters
 router.post("/", async (req, res) => {
   const { title, location_name, description, tags, owner_id } = req.body;
 
@@ -22,7 +22,7 @@ router.post("/", async (req, res) => {
   res.json(data);
 });
 
-// GET /disasters
+// 🔹 GET /disasters
 router.get("/", async (req, res) => {
   const { tag } = req.query;
   let query = supabase.from("disasters").select("*").order("created_at", { ascending: false });
@@ -34,7 +34,7 @@ router.get("/", async (req, res) => {
   res.json(data);
 });
 
-// PUT /disasters/:id
+// 🔹 PUT /disasters/:id
 router.put("/:id", async (req, res) => {
   const { id } = req.params;
   const { title, description, tags, location_name, user_id } = req.body;
@@ -55,7 +55,37 @@ router.put("/:id", async (req, res) => {
   res.json({ message: "Disaster updated", data });
 });
 
-// POST /disasters/:id/reports
+// 🔹 POST /disasters/auto-create
+router.post("/auto-create", async (req, res) => {
+  const { title, description, tags, owner_id } = req.body;
+  try {
+    const location_name = await extractLocation(description);
+    const geoRes = await axios.get("https://nominatim.openstreetmap.org/search", {
+      params: { q: location_name, format: "json", limit: 1 },
+      headers: { "User-Agent": "DisasterResponseApp/1.0" }
+    });
+
+    const result = geoRes.data[0];
+    if (!result) return res.status(404).json({ error: "Geocoding failed" });
+
+    const latitude = result.lat;
+    const longitude = result.lon;
+
+    const { data, error } = await supabase
+      .from("disasters")
+      .insert([{ title, description, tags, owner_id, location_name, latitude, longitude, location: `POINT(${longitude} ${latitude})` }])
+      .select();
+
+    if (error) return res.status(500).json({ error: "Failed to save disaster" });
+
+    req.app.get("io").emit("disaster_updated", data);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to auto-create disaster", details: err.message });
+  }
+});
+
+// 🔹 POST /disasters/:id/reports
 router.post("/:id/reports", async (req, res) => {
   const { id: disaster_id } = req.params;
   const { user_id, content, image_url } = req.body;
@@ -72,7 +102,7 @@ router.post("/:id/reports", async (req, res) => {
   res.json({ message: "Report submitted", data });
 });
 
-// GET /disasters/:id/social-media
+// 🔹 GET /disasters/:id/social-media
 router.get("/:id/social-media", async (req, res) => {
   const { id } = req.params;
 
@@ -97,10 +127,8 @@ router.get("/:id/social-media", async (req, res) => {
     { user: "watcher", post: "Just watching #storm" }
   ];
 
-  const lowerTags = tags.map(t => t.toLowerCase());
-
   const filtered = mockTweets
-    .filter(tweet => lowerTags.some(tag => tweet.post.toLowerCase().includes(tag)))
+    .filter(tweet => tags.some(tag => tweet.post.toLowerCase().includes(tag.toLowerCase())))
     .map(tweet => ({
       ...tweet,
       priority: isPriority(tweet.post) ? "high" : "normal"
@@ -109,7 +137,7 @@ router.get("/:id/social-media", async (req, res) => {
   res.json(filtered.length ? filtered : [{ user: "system", post: "No matching social media posts." }]);
 });
 
-// GET /disasters/:id/official-updates (NDMA with cache)
+// 🔹 GET /disasters/:id/official-updates (NDMA)
 router.get("/:id/official-updates", async (req, res) => {
   const cacheKey = "ndma-updates";
   const now = new Date().toISOString();
@@ -149,34 +177,73 @@ router.get("/:id/official-updates", async (req, res) => {
   }
 });
 
-// ✅ POST /disasters/:id/verify-image (Image Verification)
-router.post("/:id/verify-image", async (req, res) => {
+// 🔹 GET /disasters/:id/external-resources
+router.get("/:id/external-resources", async (req, res) => {
   const { id } = req.params;
+
+  const { data: disaster, error } = await supabase
+    .from("disasters")
+    .select("latitude, longitude")
+    .eq("id", id)
+    .single();
+
+  if (error || !disaster) return res.status(404).json({ error: "Disaster not found" });
+
+  if (!disaster.latitude || !disaster.longitude) {
+    return res.status(400).json({ error: "Missing coordinates" });
+  }
+
+  const query = `
+    [out:json];
+    (
+      node["amenity"="hospital"](around:10000,${disaster.latitude},${disaster.longitude});
+      way["amenity"="hospital"](around:10000,${disaster.latitude},${disaster.longitude});
+    );
+    out center;
+  `;
+
+  try {
+    const response = await axios.post("https://overpass-api.de/api/interpreter", query, {
+      headers: { "Content-Type": "text/plain" }
+    });
+
+    const results = response.data?.elements?.map(el => ({
+      name: el.tags?.name || "Unnamed Hospital",
+      lat: el.lat || el.center?.lat,
+      lon: el.lon || el.center?.lon
+    }));
+
+    res.json({ hospitals: results || [] });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch hospital data" });
+  }
+});
+
+// 🔹 POST /disasters/:id/verify-image
+router.post("/:id/verify-image", async (req, res) => {
   const { image_url } = req.body;
 
   if (!image_url) return res.status(400).json({ error: "Missing image_url" });
 
   try {
-    const imgRes = await axios.get(image_url, {
+    const responseImg = await axios.get(image_url, {
       responseType: "arraybuffer",
       headers: { "User-Agent": "Mozilla/5.0" }
     });
-    const imageBase64 = Buffer.from(imgRes.data).toString("base64");
+    const base64Image = Buffer.from(responseImg.data).toString("base64");
 
-    const geminiResponse = await axios.post(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent",
+    const geminiRes = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent`,
       {
         contents: [
           {
             parts: [
-              {
-                text: "Analyze this image and tell if it is a real disaster scenario (like flood, fire, etc.)"
-              },
+              { text: "Is this a real disaster situation (flood, fire, earthquake, collapse)?" },
               {
                 image: {
                   inlineData: {
                     mimeType: "image/jpeg",
-                    data: imageBase64
+                    data: base64Image
                   }
                 }
               }
@@ -190,14 +257,11 @@ router.post("/:id/verify-image", async (req, res) => {
       }
     );
 
-    const result =
-      geminiResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "No AI response";
-
-    res.json({ message: "Image analyzed", result });
+    const result = geminiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    res.json({ verified: true, result: result || "No response from Gemini." });
   } catch (err) {
     console.error("Image verification error:", err?.response?.data || err.message);
-    res.status(500).json({ error: "Image verification failed", details: err.message });
+    res.status(500).json({ error: "Image verification failed", details: err?.response?.data || err.message });
   }
 });
 
