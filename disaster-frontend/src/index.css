@@ -1,4 +1,4 @@
-/* Reset some default spacing */
+/* Reset and base styles */
 * {
   margin: 0;
   padding: 0;
@@ -15,7 +15,7 @@ body {
 
 /* Container */
 .container {
-  max-width: 800px;
+  max-width: 900px;
   margin: auto;
   background: #fff;
   padding: 25px;
@@ -26,56 +26,114 @@ body {
 /* Headings */
 h1, h2, h3 {
   margin-bottom: 16px;
-  color: #222;
+  color: #1a1a1a;
 }
 
-/* Forms */
+/* Form elements */
 form input,
 form textarea {
   width: 100%;
   padding: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   border: 1px solid #ccc;
   border-radius: 4px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 60px;
 }
 
 form button {
   background: #0077ff;
   color: #fff;
-  padding: 10px 16px;
+  padding: 10px 18px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
+  margin-right: 10px;
 }
 
 form button:hover {
   background: #005ed1;
 }
 
-/* Disaster Card */
+/* Card layout for each disaster */
 .disaster-card {
   background: #fafafa;
-  border-left: 4px solid #0077ff;
-  margin-bottom: 16px;
-  padding: 16px;
+  border-left: 5px solid #0077ff;
+  margin-bottom: 20px;
+  padding: 18px;
   border-radius: 6px;
+  transition: 0.3s;
+}
+
+.disaster-card:hover {
+  background: #f0f8ff;
 }
 
 .disaster-card h4 {
   margin-bottom: 6px;
+  font-size: 1.1rem;
 }
 
 .disaster-card small {
   color: #666;
 }
 
-textarea {
-  resize: vertical;
+/* Section inside a disaster */
+.section {
+  margin-top: 20px;
+  padding-top: 10px;
+  border-top: 1px solid #e0e0e0;
 }
 
-/* Report Fields */
-.report-section {
-  margin-top: 12px;
-  border-top: 1px solid #eee;
-  padding-top: 10px;
+.section h4 {
+  margin-bottom: 10px;
+  color: #0077ff;
+}
+
+/* List display */
+ul {
+  list-style: disc inside;
+  margin-top: 8px;
+  padding-left: 20px;
+}
+
+ul li {
+  margin-bottom: 6px;
+}
+
+/* Buttons grouped */
+.button-group {
+  margin-top: 10px;
+}
+
+.button-group button {
+  margin-right: 10px;
+}
+
+/* Image preview for verification */
+.image-preview {
+  margin-top: 10px;
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+}
+
+/* Responsive tweaks */
+@media (max-width: 600px) {
+  .container {
+    padding: 16px;
+  }
+
+  form button {
+    width: 100%;
+    margin-bottom: 10px;
+  }
+
+  .button-group button {
+    width: 100%;
+    margin-bottom: 10px;
+  }
 }

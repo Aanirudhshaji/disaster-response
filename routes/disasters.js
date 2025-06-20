@@ -1,9 +1,13 @@
+// routes/disasters.js
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
 const { extractLocation } = require("../services/geminiService");
 const axios = require("axios");
 const cheerio = require("cheerio");
+
+// Priority keyword set
+const PRIORITY_KEYWORDS = ["urgent", "sos", "emergency", "help"];
 
 // POST /disasters
 router.post("/", async (req, res) => {
@@ -31,16 +35,6 @@ router.get("/", async (req, res) => {
   res.json(data);
 });
 
-// DELETE /disasters/:id
-router.delete("/:id", async (req, res) => {
-  const { id } = req.params;
-  const { error } = await supabase.from("disasters").delete().eq("id", id);
-  if (error) return res.status(500).json({ error: "Failed to delete disaster" });
-
-  req.app.get("io").emit("disaster_updated", { deleted_id: id });
-  res.json({ message: "Disaster deleted", id });
-});
-
 // PUT /disasters/:id
 router.put("/:id", async (req, res) => {
   const { id } = req.params;
@@ -62,90 +56,23 @@ router.put("/:id", async (req, res) => {
   res.json({ message: "Disaster updated", data });
 });
 
-// POST /disasters/extract-location
-router.post("/extract-location", async (req, res) => {
-  try {
-    const { description } = req.body;
-    const location = await extractLocation(description);
-    res.json({ location });
-  } catch (err) {
-    res.status(500).json({ error: "Gemini AI failed to extract location", details: err.message });
-  }
-});
-
-// POST /disasters/auto-create
-router.post("/auto-create", async (req, res) => {
-  const { title, description, tags, owner_id } = req.body;
-  try {
-    const location_name = await extractLocation(description);
-    const geoRes = await axios.get("https://nominatim.openstreetmap.org/search", {
-      params: { q: location_name, format: "json", limit: 1 },
-      headers: { "User-Agent": "DisasterResponseApp/1.0" }
-    });
-
-    const result = geoRes.data[0];
-    if (!result) return res.status(404).json({ error: "Geocoding failed" });
-
-    const { lat: latitude, lon: longitude } = result;
-    const { data, error } = await supabase
-      .from("disasters")
-      .insert([{ title, description, tags, location_name, latitude, longitude, location: `POINT(${longitude} ${latitude})`, owner_id }])
-      .select();
-
-    if (error) return res.status(500).json({ error: "Failed to save disaster" });
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to auto-create disaster", details: err.message });
-  }
-});
-
-// POST /disasters/:id/resources
-router.post("/:id/resources", async (req, res) => {
+// POST /disasters/:id/reports
+router.post("/:id/reports", async (req, res) => {
   const { id: disaster_id } = req.params;
-  const { name, type, location_name, latitude, longitude } = req.body;
+  const { user_id, content, image_url } = req.body;
 
-  if (!name || !type || !latitude || !longitude) {
-    return res.status(400).json({ error: "Missing required fields" });
-  }
+  const priority = PRIORITY_KEYWORDS.some(k =>
+    content.toLowerCase().includes(k)
+  ) ? "high" : "normal";
 
   const { data, error } = await supabase
-    .from("resources")
-    .insert([
-      { disaster_id, name, type, location_name, location: `POINT(${longitude} ${latitude})` }
-    ])
+    .from("reports")
+    .insert([{ disaster_id, user_id, content, image_url, verification_status: "pending", priority }])
     .select();
 
-  if (error) {
-    console.error("Insert resource error:", error);
-    return res.status(500).json({ error: "Failed to save resource" });
-  }
+  if (error) return res.status(500).json({ error: "Failed to save report" });
 
-  req.app.get("io").emit("resources_updated", data);
-  res.json({ message: "Resource added", data });
-});
-
-// GET /disasters/:id/resources?lat=...&lon=...
-router.get("/:id/resources", async (req, res) => {
-  const { id } = req.params;
-  const { lat, lon } = req.query;
-
-  if (!lat || !lon) {
-    return res.status(400).json({ error: "Missing lat/lon query params" });
-  }
-
-  const { data, error } = await supabase.rpc("get_nearby_resources", {
-    disasterid: id,
-    center_lat: parseFloat(lat),
-    center_lon: parseFloat(lon),
-    radius_km: 10
-  });
-
-  if (error) {
-    console.error("Geospatial query error:", error);
-    return res.status(500).json({ error: "Failed to fetch nearby resources" });
-  }
-
-  res.json(data);
+  res.json({ message: "Report submitted", data });
 });
 
 // GET /disasters/:id/social-media
@@ -163,13 +90,8 @@ router.get("/:id/social-media", async (req, res) => {
   }
 
   let tags = disaster.tags || [];
-
   if (typeof tags === "string") {
-    try {
-      tags = JSON.parse(tags);
-    } catch {
-      tags = [];
-    }
+    try { tags = JSON.parse(tags); } catch { tags = []; }
   }
 
   const mockTweets = [
@@ -182,54 +104,49 @@ router.get("/:id/social-media", async (req, res) => {
 
   const lowerTags = tags.map(t => t.toLowerCase());
 
-  const filtered = mockTweets.filter(tweet =>
-    lowerTags.some(tag => tweet.post.toLowerCase().includes(tag))
-  );
+  const filtered = mockTweets
+    .filter(tweet => lowerTags.some(tag => tweet.post.toLowerCase().includes(tag)))
+    .map(tweet => ({
+      ...tweet,
+      priority: PRIORITY_KEYWORDS.some(k => tweet.post.toLowerCase().includes(k)) ? "high" : "normal"
+    }));
 
   res.json(filtered.length ? filtered : [{ user: "system", post: "No matching social media posts." }]);
 });
 
-// GET /disasters/:id/official-updates (with caching)
-router.get("/:id/official-updates", async (req, res) => {
-  const cacheKey = "ndma-updates";
-  const now = new Date().toISOString();
+// GET /disasters/:id/external-resources
+router.get("/:id/external-resources", async (req, res) => {
+  const { id } = req.params;
+  const { data: disaster, error } = await supabase
+    .from("disasters")
+    .select("latitude, longitude")
+    .eq("id", id)
+    .single();
 
-  const { data: cached, error: cacheErr } = await supabase
-    .from("cache")
-    .select("*")
-    .eq("key", cacheKey)
-    .gt("expires_at", now)
-    .maybeSingle();
+  if (error || !disaster) return res.status(404).json({ error: "Disaster not found" });
 
-  if (cached && cached.value) {
-    return res.json({ source: "cache", data: cached.value });
-  }
+  const query = `
+    [out:json];
+    (
+      node["amenity"="hospital"](around:10000,${disaster.latitude},${disaster.longitude});
+      way["amenity"="hospital"](around:10000,${disaster.latitude},${disaster.longitude});
+    );
+    out center;
+  `;
 
   try {
-    const response = await axios.get("https://ndma.gov.in");
-    const html = response.data;
-    const $ = cheerio.load(html);
-    const updates = [];
-
-    $(".view-announcements .views-row").each((i, el) => {
-      const update = $(el).text().trim().replace(/\s+/g, " ");
-      if (update) updates.push({ source: "NDMA", update });
+    const response = await axios.post("https://overpass-api.de/api/interpreter", query, {
+      headers: { "Content-Type": "text/plain" }
     });
 
-    if (updates.length === 0) {
-      updates.push({ source: "NDMA", update: "No official updates available currently." });
-    }
+    const results = response.data?.elements?.map(el => ({
+      name: el.tags?.name || "Unnamed Hospital",
+      lat: el.lat || el.center?.lat,
+      lon: el.lon || el.center?.lon
+    }));
 
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    await supabase
-      .from("cache")
-      .upsert({ key: cacheKey, value: updates, expires_at: expiresAt });
-
-    res.json({ source: "fresh", data: updates });
+    res.json({ hospitals: results || [] });
   } catch (err) {
-    console.error("Scraping error:", err.message);
-    res.status(500).json({ error: "Failed to fetch official updates" });
+    res.status(500).json({ error: "Failed to fetch hospital data" });
   }
 });
-
-module.exports = router;
