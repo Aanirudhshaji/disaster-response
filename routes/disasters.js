@@ -1,4 +1,3 @@
-// routes/disasters.js
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
@@ -21,47 +20,6 @@ router.post("/", async (req, res) => {
 
   req.app.get("io").emit("disaster_updated", data);
   res.json(data);
-});
-
-// ✅ POST /disasters/auto-create
-router.post("/auto-create", async (req, res) => {
-  const { title, description, tags, owner_id } = req.body;
-  try {
-    const location_name = await extractLocation(description);
-    const geoRes = await axios.get("https://nominatim.openstreetmap.org/search", {
-      params: { q: location_name, format: "json", limit: 1 },
-      headers: { "User-Agent": "DisasterResponseApp/1.0" }
-    });
-
-    const result = geoRes.data[0];
-    if (!result) return res.status(404).json({ error: "Geocoding failed" });
-
-    const latitude = result.lat;
-    const longitude = result.lon;
-
-    const { data, error } = await supabase
-      .from("disasters")
-      .insert([
-        {
-          title,
-          description,
-          tags,
-          owner_id,
-          location_name,
-          latitude,
-          longitude,
-          location: `POINT(${longitude} ${latitude})`
-        }
-      ])
-      .select();
-
-    if (error) return res.status(500).json({ error: "Failed to save disaster" });
-
-    res.json(data);
-  } catch (err) {
-    console.error("Auto-create error:", err.message);
-    res.status(500).json({ error: "Failed to auto-create disaster", details: err.message });
-  }
 });
 
 // GET /disasters
@@ -191,45 +149,55 @@ router.get("/:id/official-updates", async (req, res) => {
   }
 });
 
-// GET /disasters/:id/external-resources
-router.get("/:id/external-resources", async (req, res) => {
+// ✅ POST /disasters/:id/verify-image (Image Verification)
+router.post("/:id/verify-image", async (req, res) => {
   const { id } = req.params;
+  const { image_url } = req.body;
 
-  const { data: disaster, error } = await supabase
-    .from("disasters")
-    .select("latitude, longitude")
-    .eq("id", id)
-    .single();
-
-  if (error || !disaster) return res.status(404).json({ error: "Disaster not found" });
-
-  if (!disaster.latitude || !disaster.longitude) {
-    return res.status(400).json({ error: "Missing coordinates" });
-  }
-
-  const query = `
-    [out:json];
-    (
-      node["amenity"="hospital"](around:10000,${disaster.latitude},${disaster.longitude});
-      way["amenity"="hospital"](around:10000,${disaster.latitude},${disaster.longitude});
-    );
-    out center;
-  `;
+  if (!image_url) return res.status(400).json({ error: "Missing image_url" });
 
   try {
-    const response = await axios.post("https://overpass-api.de/api/interpreter", query, {
-      headers: { "Content-Type": "text/plain" }
+    const imgRes = await axios.get(image_url, {
+      responseType: "arraybuffer",
+      headers: { "User-Agent": "Mozilla/5.0" }
     });
+    const imageBase64 = Buffer.from(imgRes.data).toString("base64");
 
-    const results = response.data?.elements?.map(el => ({
-      name: el.tags?.name || "Unnamed Hospital",
-      lat: el.lat || el.center?.lat,
-      lon: el.lon || el.center?.lon
-    }));
+    const geminiResponse = await axios.post(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent",
+      {
+        contents: [
+          {
+            parts: [
+              {
+                text: "Analyze this image and tell if it is a real disaster scenario (like flood, fire, etc.)"
+              },
+              {
+                image: {
+                  inlineData: {
+                    mimeType: "image/jpeg",
+                    data: imageBase64
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        params: { key: process.env.GEMINI_API_KEY },
+        headers: { "Content-Type": "application/json" }
+      }
+    );
 
-    res.json({ hospitals: results || [] });
+    const result =
+      geminiResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "No AI response";
+
+    res.json({ message: "Image analyzed", result });
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch hospital data" });
+    console.error("Image verification error:", err?.response?.data || err.message);
+    res.status(500).json({ error: "Image verification failed", details: err.message });
   }
 });
 
