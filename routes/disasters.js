@@ -1,4 +1,3 @@
-// routes/disasters.js
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
@@ -6,8 +5,12 @@ const { extractLocation } = require("../services/geminiService");
 const axios = require("axios");
 const cheerio = require("cheerio");
 
-// Priority keyword set
+// Priority alert keywords
 const PRIORITY_KEYWORDS = ["urgent", "sos", "emergency", "help"];
+
+// Utility function for priority detection
+const isPriority = (text) =>
+  PRIORITY_KEYWORDS.some(k => text.toLowerCase().includes(k));
 
 // POST /disasters
 router.post("/", async (req, res) => {
@@ -40,8 +43,8 @@ router.put("/:id", async (req, res) => {
   const { id } = req.params;
   const { title, description, tags, location_name, user_id } = req.body;
 
-  const fetchResult = await supabase.from("disasters").select("audit_trail").eq("id", id).single();
-  let audit = fetchResult.data?.audit_trail || [];
+  const result = await supabase.from("disasters").select("audit_trail").eq("id", id).single();
+  let audit = result.data?.audit_trail || [];
   audit.push({ action: "update", user_id, timestamp: new Date().toISOString() });
 
   const { data, error } = await supabase
@@ -61,9 +64,7 @@ router.post("/:id/reports", async (req, res) => {
   const { id: disaster_id } = req.params;
   const { user_id, content, image_url } = req.body;
 
-  const priority = PRIORITY_KEYWORDS.some(k =>
-    content.toLowerCase().includes(k)
-  ) ? "high" : "normal";
+  const priority = isPriority(content) ? "high" : "normal";
 
   const { data, error } = await supabase
     .from("reports")
@@ -108,15 +109,16 @@ router.get("/:id/social-media", async (req, res) => {
     .filter(tweet => lowerTags.some(tag => tweet.post.toLowerCase().includes(tag)))
     .map(tweet => ({
       ...tweet,
-      priority: PRIORITY_KEYWORDS.some(k => tweet.post.toLowerCase().includes(k)) ? "high" : "normal"
+      priority: isPriority(tweet.post) ? "high" : "normal"
     }));
 
   res.json(filtered.length ? filtered : [{ user: "system", post: "No matching social media posts." }]);
 });
 
-// GET /disasters/:id/external-resources
+// GET /disasters/:id/external-resources (Nearby hospitals using Overpass API)
 router.get("/:id/external-resources", async (req, res) => {
   const { id } = req.params;
+
   const { data: disaster, error } = await supabase
     .from("disasters")
     .select("latitude, longitude")
@@ -124,6 +126,10 @@ router.get("/:id/external-resources", async (req, res) => {
     .single();
 
   if (error || !disaster) return res.status(404).json({ error: "Disaster not found" });
+
+  if (!disaster.latitude || !disaster.longitude) {
+    return res.status(400).json({ error: "Invalid coordinates for this disaster" });
+  }
 
   const query = `
     [out:json];
@@ -145,8 +151,10 @@ router.get("/:id/external-resources", async (req, res) => {
       lon: el.lon || el.center?.lon
     }));
 
-    res.json({ hospitals: results || [] });
+    res.json({ hospitals: results?.length ? results : [{ name: "No hospitals found", lat: null, lon: null }] });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch hospital data" });
   }
 });
+
+module.exports = router;

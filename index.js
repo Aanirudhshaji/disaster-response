@@ -12,21 +12,22 @@ app.use(cors());
 app.use(express.json());
 app.set("io", io);
 
-// 🔽 This route must be defined
+// Test route
 app.get("/", (req, res) => {
   res.send("Disaster Response API Running 🚀");
 });
 
-// Routes
+// Import routes
 const disasterRoutes = require("./routes/disasters");
 const geocodeRoute = require("./routes/geocode");
 const socialMediaRoute = require("./routes/socialMedia");
 const reportRoutes = require("./routes/reports");
 
-app.use("/disasters", disasterRoutes);
-app.use("/geocode", geocodeRoute);
-app.use("/mock-social-media", socialMediaRoute);
-app.use("/disasters", reportRoutes);
+// Mount routes
+app.use("/disasters", disasterRoutes);         // e.g., /disasters/...
+app.use("/geocode", geocodeRoute);             // e.g., /geocode
+app.use("/mock-social-media", socialMediaRoute); // e.g., /mock-social-media
+app.use("/reports", reportRoutes);             // ✅ FIXED: moved to /reports
 
 const PORT = process.env.PORT || 5001;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
