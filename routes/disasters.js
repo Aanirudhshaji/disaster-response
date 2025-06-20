@@ -1,3 +1,4 @@
+// routes/disasters.js
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabaseClient");
@@ -20,6 +21,47 @@ router.post("/", async (req, res) => {
 
   req.app.get("io").emit("disaster_updated", data);
   res.json(data);
+});
+
+// ✅ POST /disasters/auto-create
+router.post("/auto-create", async (req, res) => {
+  const { title, description, tags, owner_id } = req.body;
+  try {
+    const location_name = await extractLocation(description);
+    const geoRes = await axios.get("https://nominatim.openstreetmap.org/search", {
+      params: { q: location_name, format: "json", limit: 1 },
+      headers: { "User-Agent": "DisasterResponseApp/1.0" }
+    });
+
+    const result = geoRes.data[0];
+    if (!result) return res.status(404).json({ error: "Geocoding failed" });
+
+    const latitude = result.lat;
+    const longitude = result.lon;
+
+    const { data, error } = await supabase
+      .from("disasters")
+      .insert([
+        {
+          title,
+          description,
+          tags,
+          owner_id,
+          location_name,
+          latitude,
+          longitude,
+          location: `POINT(${longitude} ${latitude})`
+        }
+      ])
+      .select();
+
+    if (error) return res.status(500).json({ error: "Failed to save disaster" });
+
+    res.json(data);
+  } catch (err) {
+    console.error("Auto-create error:", err.message);
+    res.status(500).json({ error: "Failed to auto-create disaster", details: err.message });
+  }
 });
 
 // GET /disasters
