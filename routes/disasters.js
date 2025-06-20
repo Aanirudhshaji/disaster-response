@@ -5,12 +5,8 @@ const { extractLocation } = require("../services/geminiService");
 const axios = require("axios");
 const cheerio = require("cheerio");
 
-// Priority alert keywords
 const PRIORITY_KEYWORDS = ["urgent", "sos", "emergency", "help"];
-
-// Utility function for priority detection
-const isPriority = (text) =>
-  PRIORITY_KEYWORDS.some(k => text.toLowerCase().includes(k));
+const isPriority = (text) => PRIORITY_KEYWORDS.some(k => text.toLowerCase().includes(k));
 
 // POST /disasters
 router.post("/", async (req, res) => {
@@ -86,9 +82,7 @@ router.get("/:id/social-media", async (req, res) => {
     .eq("id", id)
     .single();
 
-  if (error || !disaster) {
-    return res.status(404).json({ error: "Disaster not found" });
-  }
+  if (error || !disaster) return res.status(404).json({ error: "Disaster not found" });
 
   let tags = disaster.tags || [];
   if (typeof tags === "string") {
@@ -115,7 +109,47 @@ router.get("/:id/social-media", async (req, res) => {
   res.json(filtered.length ? filtered : [{ user: "system", post: "No matching social media posts." }]);
 });
 
-// GET /disasters/:id/external-resources (Nearby hospitals using Overpass API)
+// GET /disasters/:id/official-updates (NDMA with cache)
+router.get("/:id/official-updates", async (req, res) => {
+  const cacheKey = "ndma-updates";
+  const now = new Date().toISOString();
+
+  const { data: cached } = await supabase
+    .from("cache")
+    .select("*")
+    .eq("key", cacheKey)
+    .gt("expires_at", now)
+    .maybeSingle();
+
+  if (cached?.value) {
+    return res.json({ source: "cache", data: cached.value });
+  }
+
+  try {
+    const response = await axios.get("https://ndma.gov.in");
+    const html = response.data;
+    const $ = cheerio.load(html);
+    const updates = [];
+
+    $(".view-announcements .views-row").each((_, el) => {
+      const update = $(el).text().trim().replace(/\s+/g, " ");
+      if (update) updates.push({ source: "NDMA", update });
+    });
+
+    if (updates.length === 0) {
+      updates.push({ source: "NDMA", update: "No official updates available currently." });
+    }
+
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    await supabase.from("cache").upsert({ key: cacheKey, value: updates, expires_at: expiresAt });
+
+    res.json({ source: "fresh", data: updates });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch official updates" });
+  }
+});
+
+// GET /disasters/:id/external-resources
 router.get("/:id/external-resources", async (req, res) => {
   const { id } = req.params;
 
@@ -128,7 +162,7 @@ router.get("/:id/external-resources", async (req, res) => {
   if (error || !disaster) return res.status(404).json({ error: "Disaster not found" });
 
   if (!disaster.latitude || !disaster.longitude) {
-    return res.status(400).json({ error: "Invalid coordinates for this disaster" });
+    return res.status(400).json({ error: "Missing coordinates" });
   }
 
   const query = `
@@ -151,7 +185,7 @@ router.get("/:id/external-resources", async (req, res) => {
       lon: el.lon || el.center?.lon
     }));
 
-    res.json({ hospitals: results?.length ? results : [{ name: "No hospitals found", lat: null, lon: null }] });
+    res.json({ hospitals: results || [] });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch hospital data" });
   }
