@@ -6,28 +6,33 @@ require("dotenv").config();
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, {
+  cors: { origin: "*" }
+});
 
 app.use(cors());
 app.use(express.json());
 app.set("io", io);
 
-// Test route
+// ✅ Root test route
 app.get("/", (req, res) => {
   res.send("Disaster Response API Running 🚀");
 });
 
-// Import routes
+// ✅ Import routes
 const disasterRoutes = require("./routes/disasters");
 const geocodeRoute = require("./routes/geocode");
 const socialMediaRoute = require("./routes/socialMedia");
 const reportRoutes = require("./routes/reports");
 
-// Mount routes
-app.use("/disasters", disasterRoutes);         // e.g., /disasters/...
-app.use("/geocode", geocodeRoute);             // e.g., /geocode
-app.use("/mock-social-media", socialMediaRoute); // e.g., /mock-social-media
-app.use("/reports", reportRoutes);             // ✅ FIXED: moved to /reports
+// ✅ Mount routes
+app.use("/disasters", disasterRoutes);         // All disaster-related routes
+app.use("/geocode", geocodeRoute);             // Geolocation from OSM
+app.use("/mock-social-media", socialMediaRoute); // Mock Twitter-like feed
+app.use("/reports", reportRoutes);             // Reports handled separately
 
+// ✅ Server start
 const PORT = process.env.PORT || 5001;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
